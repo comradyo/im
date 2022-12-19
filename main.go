@@ -6,36 +6,43 @@ import (
 	"time"
 )
 
+// моменты времени, когда у случайного пользователя произойдет сбой, и он отправит много запросов
 var computersBreakAt = []int64{
 	17, 300,
 }
 
 const (
-	sleepDuration = time.Millisecond * 100
+	sleepDuration = time.Millisecond * 100 // задержка процессора
 	//////////////////
-	simulationDuration = 100000
-	queueLenLimit      = 30
+	simulationDuration = 100000 // длительность симуляции
+	queueLenLimit      = 30     // максимальная длина очереди к серверу,
+	// при достижении которой программа выдает ошибку
 	//////////////////
-	numOfCores            = 3
-	numOfServers          = 5
-	numOfUsers            = 50
-	numOfRepeatedRequests = 10
+	numOfCores            = 1  // количество ядер
+	numOfServers          = 2  // количество серверов
+	numOfUsers            = 1  // количество пользователей
+	numOfRepeatedRequests = 25 // среднее число повторных запросов, которые создают пользователи при таймауте
 	//////////////////
-	maxProcessQueueLen = 10
+	maxProcessQueueLen = 10 // максимальная длина очереди к серверу, при достижении которой планировщик отключает
+	// сервер и перераспределяет нагрузку
 	//////////////////
-	handleDuration     = 10 //100
-	timeOut            = handleDuration * 5
-	checkServersPeriod = 30
-	userRequestPeriod  = 10
-	restartDuration    = 20
+	handleDuration     = 10                 // среднее время обработки запроса
+	timeOut            = handleDuration * 5 // таймаут, при его достижении пользователи отправляют повторные запросы
+	checkServersPeriod = 30                 // период, про прошествии которого, планировщик проверяет состояние
+	// серверов
+	userRequestPeriod = 10 // средняя величина периода, в течение которого пользователи ничего не
+	// делают
+	restartDuration = 20 // время, за которое перезапускается сервер
 )
 
+// Запрос
 type Request struct {
 	userID  string
 	reqTime int64
 	resTime int64
 }
 
+// Пользователь
 type User struct {
 	id              string
 	createRequestAt int64
@@ -43,6 +50,7 @@ type User struct {
 	website         *Website
 }
 
+// Просчет событий
 func (u *User) Calculate(t int64) {
 	switch {
 	case u.createRequestAt == 0 && u.currentRequest == nil:
@@ -67,6 +75,7 @@ func (u *User) Calculate(t int64) {
 	}
 }
 
+// Создание неисправности, из-за которой посылается большое число запросов
 func (u *User) Break(t int64) {
 	repeatedRequests := u.repeatRequest(t)
 	for i := range repeatedRequests {
@@ -95,12 +104,14 @@ func (u *User) repeatRequest(t int64) []*Request {
 	return requests
 }
 
+// Ядро процессора
 type Core struct {
 	jobStartsAt int64
 	jobEndsAt   int64
 	userID      string
 }
 
+// Рассчет событий
 func (c *Core) Calculate(t int64) {
 	if t >= c.jobEndsAt {
 		c.jobStartsAt = 0
@@ -109,6 +120,7 @@ func (c *Core) Calculate(t int64) {
 	}
 }
 
+// Установка работы ядру
 func (c *Core) SetJob(startsAt int64, userID string) {
 	jobDuration := rand.Int63n(handleDuration) + handleDuration/2
 	c.jobStartsAt = startsAt
@@ -116,11 +128,13 @@ func (c *Core) SetJob(startsAt int64, userID string) {
 	c.userID = userID
 }
 
+// Сервер
 type Server struct {
 	cores         []Core
 	requestsQueue []*Request
 }
 
+// Рассчет событий
 func (s *Server) Calculate(t int64) {
 	for i := range s.cores {
 		s.cores[i].Calculate(t)
@@ -128,10 +142,12 @@ func (s *Server) Calculate(t int64) {
 	s.processRequestsQueue(t)
 }
 
+// Обработка запроса
 func (s *Server) HandleRequest(req *Request) {
 	s.requestsQueue = append(s.requestsQueue, req)
 }
 
+// Перезагрузка сервера
 func (s *Server) Restart(t int64) {
 	for i := range s.cores {
 		s.cores[i].jobStartsAt = 0
@@ -141,6 +157,7 @@ func (s *Server) Restart(t int64) {
 	s.requestsQueue = s.requestsQueue[0:0]
 }
 
+// Обработка запросов из очереди
 func (s *Server) processRequestsQueue(t int64) {
 	for i := 0; i < len(s.requestsQueue); i++ {
 		availableCoreID, found := s.availableCore()
@@ -154,6 +171,7 @@ func (s *Server) processRequestsQueue(t int64) {
 	}
 }
 
+// Поиск доступного ядра
 func (s *Server) availableCore() (int, bool) {
 	for i := range s.cores {
 		if s.cores[i].jobEndsAt == 0 && s.cores[i].jobStartsAt != 0 {
@@ -166,6 +184,7 @@ func (s *Server) availableCore() (int, bool) {
 	return 0, false
 }
 
+// Балансировщик
 type Website struct {
 	userIDtoServerID map[string]int
 	servers          []Server
@@ -203,7 +222,7 @@ func (w *Website) Calculate(t int64) {
 func (w *Website) HandleRequest(req *Request) {
 	serverID, ok := w.userIDtoServerID[req.userID]
 	if !ok {
-		panic("FUCK")
+		panic("dope")
 	}
 	w.servers[serverID].HandleRequest(req)
 }
