@@ -3,260 +3,257 @@ package main
 import (
 	"fmt"
 	"math/rand"
-	"sync"
 	"time"
 )
 
-type Event interface {
-	Calculate(clock int64)
-	IsDone() bool
+const (
+	sleepDuration = time.Millisecond
+	//////////////////
+	simulationDuration = 100000
+	//////////////////
+	numOfCores            = 4
+	numOfServers          = 3
+	numOfUsers            = 3
+	numOfRepeatedRequests = 10
+	//////////////////
+	maxProcessQueueLen = 10
+	//////////////////
+	handleDuration     = 1 //100
+	timeOut            = handleDuration * 5
+	checkServersPeriod = 1000
+	userRequestPeriod  = timeOut * 2
+)
+
+type Request struct {
+	userID  string
+	reqTime int64
+	resTime int64
 }
 
-type Simulation struct {
-	clock int64
-	events []Event
+type User struct {
+	id              string
+	createRequestAt int64
+	currentRequest  *Request
+	website         *Website
 }
 
-func (s *Simulation) Iterate() {
-	s.clock++
-	eventsLen := len(s.events)
-	for i := 0; i < eventsLen; i++ {
-		if s.events[i].IsDone() {
-			eventsLen--
-			if i != eventsLen {
-				s.events = append(slice[:i], slice[i+1:]...)
+func (u *User) Calculate(t int64) {
+	if u.createRequestAt == 0 {
+		u.createRequestAt = rand.Int63n(userRequestPeriod) + userRequestPeriod
+	}
+	if t == u.createRequestAt {
+		u.currentRequest = u.createRequest(t)
+		u.website.HandleRequest(u.currentRequest)
+	}
+	if u.currentRequest != nil {
+		if t-u.currentRequest.reqTime >= timeOut {
+			repeatedRequests := u.repeatRequest(t)
+			for i := range repeatedRequests {
+				u.website.HandleRequest(repeatedRequests[i])
 			}
-			i--
-		} else {
-			s.events[i].Calculate(s.clock)
+		} else if t == u.currentRequest.resTime {
+			u.currentRequest = nil
+			u.createRequestAt = 0
 		}
 	}
 }
 
-func (s *Simulation) AddEvent(e Event) {
-	s.events = append(s.events, e)
-}
-
-func (s *Simulation) Run() {
-	for s.clock != 10000 {
-		s.Iterate()
+func (u *User) createRequest(t int64) *Request {
+	return &Request{
+		userID:  u.id,
+		reqTime: t,
 	}
 }
 
-type computer struct {
-	website Balancer
-}
-
-type User struct {
-	userID int64
-}
-
-func (u *User) Calculate(clock int64) {
-	if 
-}
-
-
-
-
-
-
-const (
-	// количество пользователей
-	numberOfUsers = 10
-	// количество серверов
-	numberOfServers = 5
-	// среднее количество повторных запросов, которые отправляет пользователь, если ему приходит таймаут
-	numberOfResends = 10
-	// количество потоков - количество запросов, которые сервер может одновременно обработать
-	numberOfThreads = 50
-	// время, за которое сервер обрабатывает запрос
-	handleTime = 5000
-	// время (в единицах времени симуляции), при превышении которого клиенту отдается таймаут
-	timeout = 50000
-	// максимальное число таймаутов, при превышении которого сервер перезагружается
-	maxTimeoutTimes = 5
-	// время, характеризующее частоту запросов от пользователей
-	userRequestTime = 1000000
-)
-
-// структура, отвечающая за симуляцию программного времени
-type Clock struct {
-	mu            *sync.RWMutex
-	t             int64
-}
-
-func NewProgramTime() *ProgramTime {
-	return &ProgramTime{
-		mu:            &sync.RWMutex{},
-		t:             0,
-	}
-}
-
-func (p *ProgramTime) SetTime(t int64) SimulationTime {
-
-}
-
-func (p *ProgramTime) GetTime() SimulationTime {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-	return p.t
-}
-
-// Тип, в котором хранятся id пользователей
-type ID string
-
-// Запрос пользователя
-type Request struct {
-	userID ID
-	// время, когда пришел запрос от пользователя
-	requestTime SimulationTime
-}
-
-// Статус ответа
-type Status int64
-
-const (
-	StatusOK Status = iota
-	StatusTimeout
-)
-
-// Ответ от сервера
-type Response struct {
-	status Status
-	// время, когда сервер отдал ответ
-	responseTime SimulationTime
-}
-
-// Пользователь
-type User struct {
-	id ID
-}
-
-// Создать запрос
-func (u *User) GenerateRequest(rTime SimulationTime) Request {
-	return Request{
-		userID:      u.id,
-		requestTime: rTime,
-	}
-}
-
-// Повторная генерация запросов пользователем
-func (u *User) RegenerateRequests(rTime SimulationTime) []Request {
-	// будет сгенерировано повторных запросов от 0 до resends * 2
-	rsnds := rand.Intn(numberOfResends*2) + 1
-	requests := make([]Request, rsnds)
-	for i := 0; i < rsnds; i++ {
-		requests[i] = Request{
-			userID:      u.id,
-			requestTime: rTime,
+func (u *User) repeatRequest(t int64) []*Request {
+	numOfRequests := rand.Intn(numOfRepeatedRequests-numOfRepeatedRequests/2) + numOfRepeatedRequests/2
+	requests := make([]*Request, numOfRequests)
+	for i := range requests {
+		requests[i] = &Request{
+			userID:  u.id,
+			reqTime: t,
 		}
 	}
 	return requests
 }
 
-func (u *U)
+type Core struct {
+	jobStartsAt int64
+	jobEndsAt   int64
+}
+
+func (c *Core) Calculate(t int64) {
+	if c.jobEndsAt >= t {
+		c.jobEndsAt = 0
+	}
+}
+
+func (c *Core) SetJob(startsAt int64) {
+	jobLen := rand.Int63n(handleDuration) + handleDuration/2
+	c.jobStartsAt = startsAt
+	c.jobEndsAt = c.jobStartsAt + jobLen
+}
 
 type Server struct {
-	mu *sync.RWMutex
-	// число потоков на сервере
-	threads int64
+	cores         []Core
+	requestsQueue []*Request
 }
 
-func (s *Server) HandleRequest(req *Request) Response {
-	responseTime := req.requestTime
-	s.mu.Lock()
-	if s.threads <= 0 {
-		for s.threads <= 0 {
-		}
-		s.mu.Lock()
-		responseTime = progTime.GetTime()
+func (s *Server) Calculate(t int64) {
+	for i := range s.cores {
+		s.cores[i].Calculate(t)
 	}
-	for s.threads <= 0 {
-		responseTime += 1
-	}
-	/*
-		если все серверы заняты, то встаем в очередь
-		while threads <= 0 {
-			wait
-		}
-		handleTime := rand(averageHandleTime) + deltaHandleTime
-		return ok
-	*/
-	return Response{}
+	s.processRequestsQueue(t)
 }
 
-// Балансировщик нагрузки
-type Balancer struct {
-	usersToServers SyncMap[ID, int]
-	servers        []*Server
-	// количество таймаутов, произошедших на серверах
-	serversTimeoutsCount []int64
+func (s *Server) HandleRequest(req *Request) {
+	s.requestsQueue = append(s.requestsQueue, req)
 }
 
-func (b *Balancer) getServerID(userID ID) int {
-	serverID, ok := b.usersToServers.Load(userID)
-	if !ok {
-		panic("user to server not found")
-	}
-	return serverID
-}
-
-func (b *Balancer) HandleRequest(req *Request) Status {
-	// получение номера сервера, к которому надо обращаться
-	serverID, ok := b.usersToServers.Load(req.userID)
-	if !ok {
-		panic("user to server not found")
-	}
-	// получение самого сервера
-	b.mu.RLock()
-	server := b.servers[serverID]
-	b.mu.RUnlock()
-	res := server.HandleRequest(req)
-	processingTime := res.responseTime - req.requestTime
-	if processingTime >= timeout {
-		b.serversTimeoutsCount[serverID]++
-		return StatusTimeout
-	}
-	b.serversTimeoutsCount[serverID] = 0
-	return StatusOK
-}
-
-func (b *Balancer) CheckAndBalance() bool {
-	serversToRestart := make([]*Server, 0, len(b.servers))
-	serversThatAreOk := make([]*Server, 0, len(b.servers))
-	for i := range b.serversTimeoutsCount {
-		if b.serversTimeoutsCount[i] > maxTimeoutTimes {
-			serversToRestart = append(serversToRestart, b.servers[i])
+func (s *Server) processRequestsQueue(t int64) {
+	for i := 0; i < len(s.requestsQueue); i++ {
+		availableCoreID, found := s.availableCore()
+		if found {
+			s.cores[availableCoreID].SetJob(t)
+			s.requestsQueue[i].resTime = s.cores[availableCoreID].jobEndsAt
+			s.requestsQueue = s.requestsQueue[1:]
 		} else {
-			serversToRestart = append(serversThatAreOk, b.servers[i])
+			i = len(s.requestsQueue)
 		}
 	}
-	if len(serversToRestart) > len(serversThatAreOk) {
-		return false
-	}
-	return false
 }
 
-func (b *Balancer) 
-
-func test(i int) {
-	go func() {
-		for {
-			t := time.Now()
-			val := progTime.GetTime()
-			fmt.Printf("test %d val = %v, time = %v\n", i, val, t)
+func (s *Server) availableCore() (int, bool) {
+	for i := range s.cores {
+		if s.cores[i].jobEndsAt == 0 {
+			return i, true
 		}
-	}()
+	}
+	return 0, false
+}
+
+type Website struct {
+	userIDtoServerID map[string]int
+	servers          []Server
+}
+
+func NewWebsite() *Website {
+	servers := make([]Server, numOfServers)
+	for i := range servers {
+		cores := make([]Core, numOfCores)
+		var queue []*Request
+		servers[i] = Server{
+			cores:         cores,
+			requestsQueue: queue,
+		}
+	}
+	mp := make(map[string]int, numOfUsers)
+	return &Website{
+		servers:          servers,
+		userIDtoServerID: mp,
+	}
+}
+
+func (w *Website) Calculate(t int64) {
+	for i := range w.servers {
+		w.servers[i].Calculate(t)
+	}
+	if t%checkServersPeriod == 0 {
+		maxQueueLen, serverID := w.longestProcessQuery()
+		if maxQueueLen > maxProcessQueueLen {
+			w.rewriteUserIDs(serverID)
+		}
+	}
+}
+
+func (w *Website) HandleRequest(req *Request) {
+	serverID, ok := w.userIDtoServerID[req.userID]
+	if !ok {
+		panic("FUCK")
+	}
+	w.servers[serverID].HandleRequest(req)
+}
+
+func (w *Website) longestProcessQuery() (int, int) {
+	maxQueueLen := len(w.servers[0].requestsQueue)
+	serverID := 0
+	for i := 1; i < len(w.servers); i++ {
+		if len(w.servers[i].requestsQueue) > maxQueueLen {
+			maxQueueLen = len(w.servers[i].requestsQueue)
+			serverID = i
+		}
+	}
+	return maxQueueLen, serverID
+}
+
+func (w *Website) rewriteUserIDs(downServerID int) {
+	minQueueLen := len(w.servers[0].requestsQueue)
+	newServerID := 0
+	for i := 1; i < len(w.servers); i++ {
+		if len(w.servers[i].requestsQueue) < minQueueLen {
+			minQueueLen = len(w.servers[i].requestsQueue)
+			newServerID = i
+		}
+	}
+	for userId, serverID := range w.userIDtoServerID {
+		if serverID == downServerID {
+			w.userIDtoServerID[userId] = newServerID
+		}
+	}
+}
+
+func (w *Website) RegisterUsers(users []User) {
+	k := 0
+	for i := range users {
+		w.userIDtoServerID[users[i].id] = k
+		k++
+		if k == len(w.servers) {
+			k = 0
+		}
+	}
+}
+
+type Clock struct {
+	ws   *Website
+	usrs []User
+}
+
+func NewClock(ws *Website, usrs []User) *Clock {
+	return &Clock{
+		ws:   ws,
+		usrs: usrs,
+	}
+}
+
+func (c *Clock) Run() {
+	for t := int64(0); t < simulationDuration; t++ {
+		time.Sleep(sleepDuration * 500)
+		c.ws.Calculate(t)
+		for i := range c.usrs {
+			c.usrs[i].Calculate(t)
+		}
+		fmt.Printf("\n\n")
+		fmt.Printf("Время от начала симуляции: %d\n", t)
+		fmt.Printf("users to server ID's: %v\n", c.ws.userIDtoServerID)
+		for i := range c.ws.servers {
+			fmt.Printf("server [%d]: \n", i)
+			fmt.Printf("\tqueue: %v\n", c.ws.servers[i].requestsQueue)
+			for j := range c.ws.servers[i].cores {
+				fmt.Printf("\tcore [%d]: %+v\n", j, c.ws.servers[i].cores[j])
+			}
+		}
+		fmt.Printf("\n\n")
+	}
 }
 
 func main() {
-	progTime = NewProgramTime(tickDuration)
-	go progTime.Run()
-
-	for i := 0; i < 5; i++ {
-		go test(i, mu)
+	website := NewWebsite()
+	users := make([]User, numOfUsers)
+	for i := range users {
+		users[i].id = fmt.Sprintf("%d", i)
+		users[i].website = website
 	}
-	time.Sleep(time.Second * 100)
+	website.RegisterUsers(users)
+	clock := NewClock(website, users)
+	clock.Run()
 }
-
-var progTime *ProgramTime
