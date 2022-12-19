@@ -6,22 +6,27 @@ import (
 	"time"
 )
 
+var computersBreakAt = []int64{
+	15, 300,
+}
+
 const (
-	sleepDuration = time.Millisecond
+	sleepDuration = time.Millisecond * 1000
 	//////////////////
 	simulationDuration = 100000
+	queueLenLimit      = 30
 	//////////////////
-	numOfCores            = 4
-	numOfServers          = 3
-	numOfUsers            = 3
+	numOfCores            = 3
+	numOfServers          = 5
+	numOfUsers            = 50
 	numOfRepeatedRequests = 10
 	//////////////////
 	maxProcessQueueLen = 10
 	//////////////////
-	handleDuration     = 1 //100
+	handleDuration     = 10 //100
 	timeOut            = handleDuration * 5
-	checkServersPeriod = 1000
-	userRequestPeriod  = timeOut * 2
+	checkServersPeriod = 30
+	userRequestPeriod  = 10
 )
 
 type Request struct {
@@ -39,7 +44,7 @@ type User struct {
 
 func (u *User) Calculate(t int64) {
 	if u.createRequestAt == 0 {
-		u.createRequestAt = rand.Int63n(userRequestPeriod) + userRequestPeriod
+		u.createRequestAt = rand.Int63n(userRequestPeriod) + userRequestPeriod/2
 	}
 	if t == u.createRequestAt {
 		u.currentRequest = u.createRequest(t)
@@ -58,6 +63,14 @@ func (u *User) Calculate(t int64) {
 	}
 }
 
+func (u *User) Break(t int64) {
+	repeatedRequests := u.repeatRequest(t)
+	for i := range repeatedRequests {
+		u.website.HandleRequest(repeatedRequests[i])
+	}
+	u.createRequestAt = t
+}
+
 func (u *User) createRequest(t int64) *Request {
 	return &Request{
 		userID:  u.id,
@@ -74,6 +87,7 @@ func (u *User) repeatRequest(t int64) []*Request {
 			reqTime: t,
 		}
 	}
+	u.currentRequest = requests[len(requests)-1]
 	return requests
 }
 
@@ -83,15 +97,16 @@ type Core struct {
 }
 
 func (c *Core) Calculate(t int64) {
-	if c.jobEndsAt >= t {
+	if t >= c.jobEndsAt {
+		c.jobStartsAt = 0
 		c.jobEndsAt = 0
 	}
 }
 
 func (c *Core) SetJob(startsAt int64) {
-	jobLen := rand.Int63n(handleDuration) + handleDuration/2
+	jobDuration := rand.Int63n(handleDuration) + handleDuration/2
 	c.jobStartsAt = startsAt
-	c.jobEndsAt = c.jobStartsAt + jobLen
+	c.jobEndsAt = c.jobStartsAt + jobDuration
 }
 
 type Server struct {
@@ -195,6 +210,9 @@ func (w *Website) rewriteUserIDs(downServerID int) {
 			newServerID = i
 		}
 	}
+	if minQueueLen > queueLenLimit {
+		panic("Очень большая очередь")
+	}
 	for userId, serverID := range w.userIDtoServerID {
 		if serverID == downServerID {
 			w.userIDtoServerID[userId] = newServerID
@@ -216,37 +234,78 @@ func (w *Website) RegisterUsers(users []User) {
 type Clock struct {
 	ws   *Website
 	usrs []User
+	//////////
+	serverUsers []string
 }
 
 func NewClock(ws *Website, usrs []User) *Clock {
+	serverUsers := make([]string, numOfServers)
 	return &Clock{
-		ws:   ws,
-		usrs: usrs,
+		ws:          ws,
+		usrs:        usrs,
+		serverUsers: serverUsers,
 	}
 }
 
+var (
+	colorReset  = "\033[0m"
+	colorRed    = "\033[31m"
+	colorGreen  = "\033[32m"
+	colorYellow = "\033[33m"
+	colorBlue   = "\033[34m"
+	colorPurple = "\033[35m"
+	colorCyan   = "\033[36m"
+	colorWhite  = "\033[37m"
+)
+
 func (c *Clock) Run() {
 	for t := int64(0); t < simulationDuration; t++ {
-		time.Sleep(sleepDuration * 500)
+		time.Sleep(sleepDuration)
+		for i := range computersBreakAt {
+			if t == computersBreakAt[i] {
+				userIDToBreak := rand.Intn(numOfUsers)
+				fmt.Printf(
+					"\n\n%sСкоро пользователь %d отправит много запросов%s\n\n",
+					colorRed, userIDToBreak, colorReset,
+				)
+				c.usrs[userIDToBreak].Break(t)
+				time.Sleep(time.Second * 3)
+			}
+		}
 		c.ws.Calculate(t)
 		for i := range c.usrs {
 			c.usrs[i].Calculate(t)
 		}
-		fmt.Printf("\n\n")
-		fmt.Printf("Время от начала симуляции: %d\n", t)
-		fmt.Printf("users to server ID's: %v\n", c.ws.userIDtoServerID)
-		for i := range c.ws.servers {
-			fmt.Printf("server [%d]: \n", i)
-			fmt.Printf("\tqueue: %v\n", c.ws.servers[i].requestsQueue)
-			for j := range c.ws.servers[i].cores {
-				fmt.Printf("\tcore [%d]: %+v\n", j, c.ws.servers[i].cores[j])
-			}
-		}
-		fmt.Printf("\n\n")
+		c.print(t)
 	}
 }
 
+func (c *Clock) print(t int64) {
+	fmt.Print("\033[H\033[2J")
+	fmt.Printf("\n\n")
+	fmt.Printf("Время от начала симуляции: %s%d%s\n", colorYellow, t, colorReset)
+	for i := range c.serverUsers {
+		c.serverUsers[i] = ""
+	}
+	for u, s := range c.ws.userIDtoServerID {
+		c.serverUsers[s] += " " + u
+	}
+	fmt.Printf("Распределение пользователей по серверам:\n")
+	for i := range c.serverUsers {
+		fmt.Printf("\t Server %s%d%s: %s%s%s\n", colorCyan, i, colorReset, colorGreen, c.serverUsers[i], colorReset)
+	}
+	for i := range c.ws.servers {
+		fmt.Printf("server [%d]: \n", i)
+		fmt.Printf("\tqueue: %s%v%s\n", colorRed, len(c.ws.servers[i].requestsQueue), colorReset)
+		for j := range c.ws.servers[i].cores {
+			fmt.Printf("\tcore [%d]: %+v\n", j, c.ws.servers[i].cores[j])
+		}
+	}
+	fmt.Printf("\n\n")
+}
+
 func main() {
+	rand.Seed(time.Now().UnixNano())
 	website := NewWebsite()
 	users := make([]User, numOfUsers)
 	for i := range users {
