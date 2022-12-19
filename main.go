@@ -7,11 +7,11 @@ import (
 )
 
 var computersBreakAt = []int64{
-	15, 300,
+	17, 300,
 }
 
 const (
-	sleepDuration = time.Millisecond * 1000
+	sleepDuration = time.Millisecond * 100
 	//////////////////
 	simulationDuration = 100000
 	queueLenLimit      = 30
@@ -27,6 +27,7 @@ const (
 	timeOut            = handleDuration * 5
 	checkServersPeriod = 30
 	userRequestPeriod  = 10
+	restartDuration    = 20
 )
 
 type Request struct {
@@ -43,14 +44,13 @@ type User struct {
 }
 
 func (u *User) Calculate(t int64) {
-	if u.createRequestAt == 0 {
-		u.createRequestAt = rand.Int63n(userRequestPeriod) + userRequestPeriod/2
-	}
-	if t == u.createRequestAt {
+	switch {
+	case u.createRequestAt == 0 && u.currentRequest == nil:
+		u.createRequestAt = t + rand.Int63n(userRequestPeriod) + userRequestPeriod/2
+	case t == u.createRequestAt:
 		u.currentRequest = u.createRequest(t)
 		u.website.HandleRequest(u.currentRequest)
-	}
-	if u.currentRequest != nil {
+	case u.currentRequest != nil:
 		if t-u.currentRequest.reqTime >= timeOut {
 			repeatedRequests := u.repeatRequest(t)
 			for i := range repeatedRequests {
@@ -60,6 +60,10 @@ func (u *User) Calculate(t int64) {
 			u.currentRequest = nil
 			u.createRequestAt = 0
 		}
+	case t > u.createRequestAt:
+		panic(
+			fmt.Sprintf("t = %v id = %v createRAt = %v curReq = %v", t, u.id, u.createRequestAt, u.currentRequest),
+		)
 	}
 }
 
@@ -94,19 +98,22 @@ func (u *User) repeatRequest(t int64) []*Request {
 type Core struct {
 	jobStartsAt int64
 	jobEndsAt   int64
+	userID      string
 }
 
 func (c *Core) Calculate(t int64) {
 	if t >= c.jobEndsAt {
 		c.jobStartsAt = 0
 		c.jobEndsAt = 0
+		c.userID = ""
 	}
 }
 
-func (c *Core) SetJob(startsAt int64) {
+func (c *Core) SetJob(startsAt int64, userID string) {
 	jobDuration := rand.Int63n(handleDuration) + handleDuration/2
 	c.jobStartsAt = startsAt
 	c.jobEndsAt = c.jobStartsAt + jobDuration
+	c.userID = userID
 }
 
 type Server struct {
@@ -125,11 +132,20 @@ func (s *Server) HandleRequest(req *Request) {
 	s.requestsQueue = append(s.requestsQueue, req)
 }
 
+func (s *Server) Restart(t int64) {
+	for i := range s.cores {
+		s.cores[i].jobStartsAt = 0
+		s.cores[i].jobEndsAt = t + restartDuration
+		s.cores[i].userID = ""
+	}
+	s.requestsQueue = s.requestsQueue[0:0]
+}
+
 func (s *Server) processRequestsQueue(t int64) {
 	for i := 0; i < len(s.requestsQueue); i++ {
 		availableCoreID, found := s.availableCore()
 		if found {
-			s.cores[availableCoreID].SetJob(t)
+			s.cores[availableCoreID].SetJob(t, s.requestsQueue[i].userID)
 			s.requestsQueue[i].resTime = s.cores[availableCoreID].jobEndsAt
 			s.requestsQueue = s.requestsQueue[1:]
 		} else {
@@ -140,6 +156,9 @@ func (s *Server) processRequestsQueue(t int64) {
 
 func (s *Server) availableCore() (int, bool) {
 	for i := range s.cores {
+		if s.cores[i].jobEndsAt == 0 && s.cores[i].jobStartsAt != 0 {
+			panic("time travel")
+		}
 		if s.cores[i].jobEndsAt == 0 {
 			return i, true
 		}
@@ -176,7 +195,7 @@ func (w *Website) Calculate(t int64) {
 	if t%checkServersPeriod == 0 {
 		maxQueueLen, serverID := w.longestProcessQuery()
 		if maxQueueLen > maxProcessQueueLen {
-			w.rewriteUserIDs(serverID)
+			w.rewriteUserIDs(serverID, t)
 		}
 	}
 }
@@ -201,7 +220,7 @@ func (w *Website) longestProcessQuery() (int, int) {
 	return maxQueueLen, serverID
 }
 
-func (w *Website) rewriteUserIDs(downServerID int) {
+func (w *Website) rewriteUserIDs(crashedServerID int, t int64) {
 	minQueueLen := len(w.servers[0].requestsQueue)
 	newServerID := 0
 	for i := 1; i < len(w.servers); i++ {
@@ -214,10 +233,11 @@ func (w *Website) rewriteUserIDs(downServerID int) {
 		panic("Очень большая очередь")
 	}
 	for userId, serverID := range w.userIDtoServerID {
-		if serverID == downServerID {
+		if serverID == crashedServerID {
 			w.userIDtoServerID[userId] = newServerID
 		}
 	}
+	w.servers[crashedServerID].Restart(t)
 }
 
 func (w *Website) RegisterUsers(users []User) {
@@ -296,7 +316,11 @@ func (c *Clock) print(t int64) {
 	}
 	for i := range c.ws.servers {
 		fmt.Printf("server [%d]: \n", i)
-		fmt.Printf("\tqueue: %s%v%s\n", colorRed, len(c.ws.servers[i].requestsQueue), colorReset)
+		fmt.Printf("\tqueue: ")
+		for j := 0; j < len(c.ws.servers[i].requestsQueue); j++ {
+			fmt.Printf("%s%s%s ", colorRed, c.ws.servers[i].requestsQueue[j].userID, colorReset)
+		}
+		fmt.Printf("\n")
 		for j := range c.ws.servers[i].cores {
 			fmt.Printf("\tcore [%d]: %+v\n", j, c.ws.servers[i].cores[j])
 		}
