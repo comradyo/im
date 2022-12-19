@@ -15,24 +15,24 @@ const (
 	sleepDuration = time.Millisecond * 100 // задержка процессора
 	//////////////////
 	simulationDuration = 100000 // длительность симуляции
-	queueLenLimit      = 30     // максимальная длина очереди к серверу,
+	queueLenLimit      = 20     // максимальная длина очереди к серверу,
 	// при достижении которой программа выдает ошибку
 	//////////////////
-	numOfCores            = 1  // количество ядер
-	numOfServers          = 2  // количество серверов
-	numOfUsers            = 1  // количество пользователей
+	numOfCores            = 4  // количество ядер
+	numOfServers          = 4  // количество серверов
+	numOfUsers            = 50 // количество пользователей
 	numOfRepeatedRequests = 25 // среднее число повторных запросов, которые создают пользователи при таймауте
 	//////////////////
 	maxProcessQueueLen = 10 // максимальная длина очереди к серверу, при достижении которой планировщик отключает
 	// сервер и перераспределяет нагрузку
 	//////////////////
 	handleDuration     = 10                 // среднее время обработки запроса
-	timeOut            = handleDuration * 5 // таймаут, при его достижении пользователи отправляют повторные запросы
+	timeOut            = handleDuration * 2 // таймаут, при его достижении пользователи отправляют повторные запросы
 	checkServersPeriod = 30                 // период, про прошествии которого, планировщик проверяет состояние
 	// серверов
 	userRequestPeriod = 10 // средняя величина периода, в течение которого пользователи ничего не
 	// делают
-	restartDuration = 20 // время, за которое перезапускается сервер
+	restartDuration = 50 // время, за которое перезапускается сервер
 )
 
 // Запрос
@@ -50,7 +50,7 @@ type User struct {
 	website         *Website
 }
 
-// Просчет событий
+// Расчет событий
 func (u *User) Calculate(t int64) {
 	switch {
 	case u.createRequestAt == 0 && u.currentRequest == nil:
@@ -111,7 +111,7 @@ type Core struct {
 	userID      string
 }
 
-// Рассчет событий
+// Расчет событий
 func (c *Core) Calculate(t int64) {
 	if t >= c.jobEndsAt {
 		c.jobStartsAt = 0
@@ -134,7 +134,7 @@ type Server struct {
 	requestsQueue []*Request
 }
 
-// Рассчет событий
+// Расчет событий
 func (s *Server) Calculate(t int64) {
 	for i := range s.cores {
 		s.cores[i].Calculate(t)
@@ -207,6 +207,7 @@ func NewWebsite() *Website {
 	}
 }
 
+// Расчет событий
 func (w *Website) Calculate(t int64) {
 	for i := range w.servers {
 		w.servers[i].Calculate(t)
@@ -219,10 +220,11 @@ func (w *Website) Calculate(t int64) {
 	}
 }
 
+// Обработка запроса
 func (w *Website) HandleRequest(req *Request) {
 	serverID, ok := w.userIDtoServerID[req.userID]
 	if !ok {
-		panic("dope")
+		panic("Непредвиденная ошибка, сервер для пользователя не найден")
 	}
 	w.servers[serverID].HandleRequest(req)
 }
@@ -270,6 +272,7 @@ func (w *Website) RegisterUsers(users []User) {
 	}
 }
 
+// Процесс симуляции времени
 type Clock struct {
 	ws   *Website
 	usrs []User
@@ -297,6 +300,7 @@ var (
 	colorWhite  = "\033[37m"
 )
 
+// Выполнение симуляции
 func (c *Clock) Run() {
 	for t := int64(0); t < simulationDuration; t++ {
 		time.Sleep(sleepDuration)
@@ -319,6 +323,7 @@ func (c *Clock) Run() {
 	}
 }
 
+// красивый вывод статистики
 func (c *Clock) print(t int64) {
 	fmt.Print("\033[H\033[2J")
 	fmt.Printf("\n\n")
@@ -335,11 +340,14 @@ func (c *Clock) print(t int64) {
 	}
 	for i := range c.ws.servers {
 		fmt.Printf("server [%d]: \n", i)
-		fmt.Printf("\tqueue: ")
-		for j := 0; j < len(c.ws.servers[i].requestsQueue); j++ {
-			fmt.Printf("%s%s%s ", colorRed, c.ws.servers[i].requestsQueue[j].userID, colorReset)
-		}
-		fmt.Printf("\n")
+		fmt.Printf("\tqueue lenght: %s%d%s\n", colorRed, len(c.ws.servers[i].requestsQueue), colorReset)
+		/*
+			fmt.Printf("\tqueue: ")
+			for j := 0; j < len(c.ws.servers[i].requestsQueue); j++ {
+				fmt.Printf("%s%s%s ", colorRed, c.ws.servers[i].requestsQueue[j].userID, colorReset)
+			}
+			fmt.Printf("\n")
+		*/
 		for j := range c.ws.servers[i].cores {
 			fmt.Printf("\tcore [%d]: %+v\n", j, c.ws.servers[i].cores[j])
 		}
